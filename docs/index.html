@@ -596,6 +596,52 @@
   .flash-up   { animation: flashGreen 0.8s ease-out; }
   .flash-down { animation: flashRed   0.8s ease-out; }
 
+  /* ── Analyst rating ── */
+  .rating-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 7px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+  }
+  .rating-strong-buy  { background: #00e67625; color: #00e676; border: 1px solid #00e67640; }
+  .rating-buy         { background: #66bb6a20; color: #66bb6a; border: 1px solid #66bb6a40; }
+  .rating-hold        { background: #ffd60020; color: #ffd600; border: 1px solid #ffd60040; }
+  .rating-sell        { background: #ffa72620; color: #ffa726; border: 1px solid #ffa72640; }
+  .rating-strong-sell { background: #ff456020; color: #ff4560; border: 1px solid #ff456040; }
+  .rating-na          { background: var(--surface3); color: var(--muted); border: 1px solid var(--border2); }
+
+  .rating-bar {
+    display: flex;
+    gap: 2px;
+    margin-top: 5px;
+    height: 4px;
+    border-radius: 2px;
+    overflow: hidden;
+    min-width: 80px;
+  }
+  .rb-sb { background: #00e676; }
+  .rb-b  { background: #66bb6a; }
+  .rb-h  { background: #ffd600; }
+  .rb-s  { background: #ffa726; }
+  .rb-ss { background: #ff4560; }
+
+  .target-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .target-sub {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
   /* ── Market status pill ── */
   .market-status {
     font-size: 10px;
@@ -655,10 +701,10 @@
       </div>
       <table>
         <thead><tr>
-          <th>Ticker</th><th>Price</th><th>Change</th><th>% Change</th><th>Volume</th><th>52W Range</th>
+          <th>Ticker</th><th>Price</th><th>Change</th><th>% Change</th><th>Analyst Rating</th><th>Price Target</th><th>Volume</th><th>52W Range</th>
         </tr></thead>
         <tbody id="stock-tbody">
-          <tr class="row-loading"><td colspan="6"><span class="spinner"></span>Loading stocks…</td></tr>
+          <tr class="row-loading"><td colspan="8"><span class="spinner"></span>Loading stocks…</td></tr>
         </tbody>
       </table>
     </div>
@@ -891,6 +937,36 @@ function pill(id, price, pct) {
 }
 
 // ── Stocks ────────────────────────────────────────────────────────────────────
+// ── Analyst rating helper ─────────────────────────────────────────────────────
+function analystRating(rec) {
+  if (!rec || !rec.length) return null;
+  const r = rec[0]; // most recent period
+  const total = (r.strongBuy||0) + (r.buy||0) + (r.hold||0) + (r.sell||0) + (r.strongSell||0);
+  if (!total) return null;
+  const score = ((r.strongBuy||0)*2 + (r.buy||0)*1 + (r.hold||0)*0 + (r.sell||0)*-1 + (r.strongSell||0)*-2) / total;
+  let label, cssClass, icon;
+  if      (score >= 1.2)  { label='Strong Buy';  cssClass='rating-strong-buy';  icon='⬆⬆'; }
+  else if (score >= 0.4)  { label='Buy';          cssClass='rating-buy';         icon='⬆'; }
+  else if (score >= -0.4) { label='Hold';         cssClass='rating-hold';        icon='➡'; }
+  else if (score >= -1.2) { label='Sell';         cssClass='rating-sell';        icon='⬇'; }
+  else                    { label='Strong Sell';  cssClass='rating-strong-sell'; icon='⬇⬇'; }
+  return { label, cssClass, icon, total,
+    sb: r.strongBuy||0, b: r.buy||0, h: r.hold||0, s: r.sell||0, ss: r.strongSell||0 };
+}
+
+function ratingBar(rt) {
+  if (!rt) return '';
+  const tot = rt.total || 1;
+  const w = n => Math.round((n/tot)*100);
+  return `<div class="rating-bar">
+    ${rt.sb ? `<div class="rb-sb" style="width:${w(rt.sb)}%" title="Strong Buy: ${rt.sb}"></div>` : ''}
+    ${rt.b  ? `<div class="rb-b"  style="width:${w(rt.b)}%"  title="Buy: ${rt.b}"></div>`         : ''}
+    ${rt.h  ? `<div class="rb-h"  style="width:${w(rt.h)}%"  title="Hold: ${rt.h}"></div>`        : ''}
+    ${rt.s  ? `<div class="rb-s"  style="width:${w(rt.s)}%"  title="Sell: ${rt.s}"></div>`        : ''}
+    ${rt.ss ? `<div class="rb-ss" style="width:${w(rt.ss)}%" title="Strong Sell: ${rt.ss}"></div>`: ''}
+  </div>`;
+}
+
 async function fetchStocks() {
   const cfg = loadCfg();
   const tbody = document.getElementById('stock-tbody');
@@ -898,17 +974,19 @@ async function fetchStocks() {
 
   if (!cfg.finnhubKey) {
     badge.textContent = 'No API key';
-    tbody.innerHTML = `<tr class="row-loading"><td colspan="6">Add your free Finnhub API key in <strong>⚙ Configure</strong> to see live stock data.</td></tr>`;
+    tbody.innerHTML = `<tr class="row-loading"><td colspan="8">Add your free Finnhub API key in <strong>⚙ Configure</strong> to see live stock data.</td></tr>`;
     return;
   }
 
   const results = await Promise.all(cfg.stocks.map(async t => {
     try {
-      const [q, p] = await Promise.all([
+      const [q, p, rec, pt] = await Promise.all([
         fetch(`https://finnhub.io/api/v1/quote?symbol=${t}&token=${cfg.finnhubKey}`).then(r=>r.json()),
         fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${t}&token=${cfg.finnhubKey}`).then(r=>r.json()),
+        fetch(`https://finnhub.io/api/v1/stock/recommendation?symbol=${t}&token=${cfg.finnhubKey}`).then(r=>r.json()).catch(()=>[]),
+        fetch(`https://finnhub.io/api/v1/stock/price-target?symbol=${t}&token=${cfg.finnhubKey}`).then(r=>r.json()).catch(()=>null),
       ]);
-      return { t, q, p };
+      return { t, q, p, rec, pt };
     } catch { return null; }
   }));
 
@@ -920,9 +998,20 @@ async function fetchStocks() {
     if (t==='QQQ') pill('qqq', q.c, q.dp);
   });
 
-  tbody.innerHTML = rows.map(({t,q,p}) => {
+  tbody.innerHTML = rows.map(({t,q,p,rec,pt}) => {
     const c = cls(q.dp);
     const range = q.l && q.h ? `${fmtP(q.l)} <span style="color:var(--muted2)">–</span> ${fmtP(q.h)}` : '—';
+    const rt = analystRating(rec);
+    const ratingHtml = rt
+      ? `<div class="rating-pill ${rt.cssClass}">${rt.icon} ${rt.label}</div>
+         ${ratingBar(rt)}
+         <div style="font-size:10px;color:var(--muted);margin-top:3px">${rt.total} analysts</div>`
+      : `<div class="rating-pill rating-na">No Data</div>`;
+    const targetHtml = pt && pt.targetMean
+      ? `<div class="target-val">${fmtP(pt.targetMean)}</div>
+         <div class="target-sub">${fmtP(pt.targetLow)} – ${fmtP(pt.targetHigh)}</div>`
+      : `<span class="muted-val">—</span>`;
+
     return `<tr>
       <td>
         <div class="sym">${t}</div>
@@ -931,6 +1020,8 @@ async function fetchStocks() {
       <td><div class="price-val">${fmtP(q.c)}</div></td>
       <td><div class="chg ${c}">${q.d>=0?'▲':'▼'} ${fmtP(Math.abs(q.d))}</div></td>
       <td><div class="chg-pill ${c}">${fmtPct(q.dp)}</div></td>
+      <td>${ratingHtml}</td>
+      <td>${targetHtml}</td>
       <td class="muted-val">${fmtVol(q.v)}</td>
       <td class="muted-val">${range}</td>
     </tr>`;
