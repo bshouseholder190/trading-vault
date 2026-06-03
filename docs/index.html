@@ -691,6 +691,168 @@
 
   .market-open   { background: var(--green-dim); color: var(--green); }
   .market-closed { background: var(--red-dim);   color: var(--red);   }
+
+  /* ── Hot Buys ── */
+  .hotbuy-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    padding: 20px;
+  }
+
+  @media (max-width: 900px) { .hotbuy-grid { grid-template-columns: 1fr; } }
+
+  .hotbuy-card {
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 14px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s, transform 0.15s;
+  }
+
+  .hotbuy-card:hover {
+    border-color: #ffd60060;
+    transform: translateY(-2px);
+  }
+
+  .hotbuy-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #ffd600, #ff9800, #ff4560);
+    opacity: 0.8;
+  }
+
+  .hb-rank {
+    position: absolute;
+    top: 14px; right: 14px;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ffd600, #ff9800);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 800;
+    color: #000;
+  }
+
+  .hb-header { display: flex; align-items: flex-start; gap: 12px; }
+
+  .hb-icon {
+    width: 40px; height: 40px;
+    border-radius: 10px;
+    background: var(--surface3);
+    border: 1px solid var(--border2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  .hb-ticker {
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: -0.3px;
+    line-height: 1;
+  }
+
+  .hb-name {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 3px;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .hb-price-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .hb-price {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 20px;
+    font-weight: 700;
+  }
+
+  .hb-upside {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--green-dim);
+    color: var(--green);
+    border: 1px solid #00e67630;
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 12px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .hb-target-label {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .hb-donut-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .hb-reasons {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    flex: 1;
+  }
+
+  .hb-reason {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  .hb-reason-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--gold);
+    margin-top: 6px;
+    flex-shrink: 0;
+  }
+
+  .hb-loading {
+    padding: 40px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .hotbuy-refresh {
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--surface3);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 4px 10px;
+    transition: color 0.15s;
+  }
+  .hotbuy-refresh:hover { color: var(--gold); border-color: var(--gold); }
 </style>
 </head>
 <body>
@@ -828,6 +990,23 @@
       </table>
     </div>
 
+  </div>
+
+  <!-- ── Hot Buys ── -->
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-header">
+      <div class="card-title">
+        <div class="ct-icon" style="background:#ffd60018;border:1px solid #ffd60030">🔥</div>
+        Hot Buys — Top Analyst Picks
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="badge" id="hotbuy-badge">Scanning…</span>
+        <button class="hotbuy-refresh" onclick="fetchHotBuys()">↻ Refresh Picks</button>
+      </div>
+    </div>
+    <div id="hotbuy-body">
+      <div class="hb-loading"><span class="spinner"></span> Scanning analyst data…</div>
+    </div>
   </div>
 
   <div class="footer" id="last-updated">Waiting for data…</div>
@@ -1273,6 +1452,182 @@ async function fetchCommodities() {
   } catch {}
 }
 
+// ── Hot Buys ─────────────────────────────────────────────────────────────────
+// Broader scan list — user's watchlist + these well-known names
+const SCAN_UNIVERSE = [
+  'NVDA','AAPL','MSFT','TSLA','AMD','AMZN','META','GOOGL','GOOG',
+  'AVGO','JPM','V','MA','UNH','LLY','JNJ','PG','HD','COST',
+  'CRM','NOW','SNOW','PLTR','PANW','CRWD','ARM','MRVL','SMCI',
+  'ORCL','IBM','ADBE','INTU','KLAC','LRCX','AMAT','TXN','QCOM',
+  'BAC','GS','MS','BRK.B','WMT','TGT','NKE','SBUX','MCD',
+  'NFLX','DIS','SPOT','UBER','LYFT','ABNB','BKNG','COIN',
+];
+
+function buildReasons(ticker, q, pt, rec, profile) {
+  const reasons = [];
+  const upside = pt?.targetMean && q?.c ? ((pt.targetMean - q.c) / q.c) * 100 : null;
+  const tot = rec ? (rec.strongBuy||0)+(rec.buy||0)+(rec.hold||0)+(rec.sell||0)+(rec.strongSell||0) : 0;
+  const bullish = rec ? (rec.strongBuy||0) + (rec.buy||0) : 0;
+  const bullPct = tot ? Math.round((bullish / tot) * 100) : 0;
+
+  if (upside !== null && upside > 5) {
+    reasons.push(`Analysts see <strong style="color:var(--green)">${upside.toFixed(0)}% upside</strong> to a mean price target of ${fmtP(pt.targetMean)} (range ${fmtP(pt.targetLow)}–${fmtP(pt.targetHigh)})`);
+  }
+
+  if (bullPct > 0) {
+    reasons.push(`<strong style="color:var(--text)">${bullPct}% of ${tot} analysts</strong> rate it Buy or Strong Buy (${rec.strongBuy||0} Strong Buy, ${rec.buy||0} Buy)`);
+  }
+
+  if (q?.dp) {
+    const trend = q.dp > 0
+      ? `Up <strong style="color:var(--green)">${q.dp.toFixed(1)}%</strong> today — momentum aligns with bullish thesis`
+      : `Down <strong style="color:var(--red)">${Math.abs(q.dp).toFixed(1)}%</strong> today — potential entry opportunity near analyst target`;
+    reasons.push(trend);
+  }
+
+  if (pt?.targetHigh && q?.c) {
+    const highUpside = ((pt.targetHigh - q.c) / q.c) * 100;
+    if (highUpside > 20) {
+      reasons.push(`Bull-case target of ${fmtP(pt.targetHigh)} implies <strong style="color:var(--green)">${highUpside.toFixed(0)}% max upside</strong> in optimistic scenario`);
+    }
+  }
+
+  if (profile?.finnhubIndustry) {
+    reasons.push(`Sector: <strong style="color:var(--text)">${profile.finnhubIndustry}</strong> — ${profile.marketCapitalization ? 'Mkt Cap $' + fmtVol(profile.marketCapitalization * 1e6) : ''}`);
+  }
+
+  return reasons.slice(0, 3);
+}
+
+function hbDonut(rec) {
+  if (!rec) return '';
+  const tot = (rec.strongBuy||0)+(rec.buy||0)+(rec.hold||0)+(rec.sell||0)+(rec.strongSell||0);
+  if (!tot) return '';
+  const rt = analystRating([rec]);
+  const SIZE=44, cx=22, cy=22, R=15, THICK=6;
+  const circ = 2*Math.PI*R;
+  const GAP = circ*0.02;
+  const segs = [
+    {val:rec.strongBuy||0,color:'#00e676'},
+    {val:rec.buy||0,      color:'#4caf73'},
+    {val:rec.hold||0,     color:'#ffd600'},
+    {val:rec.sell||0,     color:'#ffa726'},
+    {val:rec.strongSell||0,color:'#ff4560'},
+  ].filter(s=>s.val>0);
+  let cum=0;
+  const circles = segs.map(s=>{
+    const full=(s.val/tot)*circ;
+    const seg=Math.max(0,full-GAP);
+    const el=`<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${s.color}"
+      stroke-width="${THICK}" stroke-linecap="butt"
+      stroke-dasharray="${seg} ${circ}" stroke-dashoffset="${-cum}"
+      transform="rotate(-90 ${cx} ${cy})"/>`;
+    cum+=full; return el;
+  });
+  return `<svg width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">
+    <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="#1e2d3d" stroke-width="${THICK}"/>
+    ${circles.join('')}
+    <text x="${cx}" y="${cy+4}" text-anchor="middle" font-size="9" font-weight="800"
+      fill="#e8f0f8" font-family="Inter,sans-serif">${tot}</text>
+  </svg>`;
+}
+
+async function fetchHotBuys() {
+  const cfg = loadCfg();
+  const body = document.getElementById('hotbuy-body');
+  const badge = document.getElementById('hotbuy-badge');
+
+  if (!cfg.finnhubKey) {
+    body.innerHTML = `<div class="hb-loading">Add your Finnhub API key in ⚙ Configure to enable Hot Buys.</div>`;
+    badge.textContent = 'No API key';
+    return;
+  }
+
+  body.innerHTML = `<div class="hb-loading"><span class="spinner"></span> Scanning ${SCAN_UNIVERSE.length} stocks for analyst signals…</div>`;
+  badge.textContent = 'Scanning…';
+
+  // Fetch in small batches to avoid rate limits
+  const scored = [];
+  const batchSize = 8;
+  for (let i = 0; i < SCAN_UNIVERSE.length; i += batchSize) {
+    const batch = SCAN_UNIVERSE.slice(i, i + batchSize);
+    const results = await Promise.all(batch.map(async t => {
+      try {
+        const [q, pt, recArr, profile] = await Promise.all([
+          fetch(`https://finnhub.io/api/v1/quote?symbol=${t}&token=${cfg.finnhubKey}`).then(r=>r.json()),
+          fetch(`https://finnhub.io/api/v1/stock/price-target?symbol=${t}&token=${cfg.finnhubKey}`).then(r=>r.json()).catch(()=>null),
+          fetch(`https://finnhub.io/api/v1/stock/recommendation?symbol=${t}&token=${cfg.finnhubKey}`).then(r=>r.json()).catch(()=>[]),
+          fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${t}&token=${cfg.finnhubKey}`).then(r=>r.json()).catch(()=>null),
+        ]);
+        if (!q?.c) return null;
+        const rec = Array.isArray(recArr) && recArr.length ? recArr[0] : null;
+        const tot = rec ? (rec.strongBuy||0)+(rec.buy||0)+(rec.hold||0)+(rec.sell||0)+(rec.strongSell||0) : 0;
+        if (!tot) return null;
+
+        // Scoring: analyst conviction + price target upside
+        const bullish = (rec.strongBuy||0)*2 + (rec.buy||0);
+        const analystScore = bullish / tot;                          // 0–2
+        const upside = pt?.targetMean && q.c ? (pt.targetMean - q.c) / q.c : 0;
+        const upsideScore = Math.min(upside, 0.6) / 0.6;             // 0–1, capped at 60%
+        const totalScore = analystScore * 0.65 + upsideScore * 0.35;
+
+        return { t, q, pt, rec, profile, totalScore, upside: upside*100 };
+      } catch { return null; }
+    }));
+    results.filter(Boolean).forEach(r => scored.push(r));
+  }
+
+  // Sort by score, take top 3
+  const top3 = scored
+    .filter(s => s.totalScore > 0.5 && s.upside > 0)
+    .sort((a, b) => b.totalScore - a.totalScore)
+    .slice(0, 3);
+
+  if (!top3.length) {
+    body.innerHTML = `<div class="hb-loading">Not enough analyst data available. Try adding your Finnhub API key or check back later.</div>`;
+    badge.textContent = 'No picks';
+    return;
+  }
+
+  badge.textContent = `Top ${top3.length} of ${scored.length} scanned`;
+
+  const icons = ['🥇','🥈','🥉'];
+
+  body.innerHTML = `<div class="hotbuy-grid">${top3.map((s, i) => {
+    const { t, q, pt, rec, profile } = s;
+    const rt = analystRating([rec]);
+    const upsidePct = s.upside.toFixed(1);
+    const reasons = buildReasons(t, q, pt, rec, profile);
+    return `<div class="hotbuy-card">
+      <div class="hb-rank">${i+1}</div>
+      <div class="hb-header">
+        <div class="hb-icon">${icons[i]}</div>
+        <div>
+          <div class="hb-ticker">${t}</div>
+          <div class="hb-name">${profile?.name || ''}</div>
+        </div>
+      </div>
+      <div>
+        <div class="hb-price-row">
+          <div class="hb-price">${fmtP(q.c)}</div>
+          <div class="chg-pill ${cls(q.dp)}">${fmtPct(q.dp)}</div>
+        </div>
+        ${pt?.targetMean ? `<div class="hb-target-label">Target: ${fmtP(pt.targetMean)} · <span style="color:var(--green)">+${upsidePct}% upside</span></div>` : ''}
+      </div>
+      <div class="hb-donut-row">
+        ${hbDonut(rec)}
+        ${rt ? `<div>
+          <div class="rating-pill ${rt.cssClass}" style="font-size:12px">${rt.label}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px">${rt.total} analysts</div>
+        </div>` : ''}
+      </div>
+      <ul class="hb-reasons">
+        ${reasons.map(r => `<li class="hb-reason"><div class="hb-reason-dot"></div><span>${r}</span></li>`).join('')}
+      </ul>
+    </div>`;
+  }).join('')}</div>`;
+}
+
 // ── Refresh ───────────────────────────────────────────────────────────────────
 let timer = null;
 
@@ -1280,6 +1635,7 @@ async function refreshAll() {
   document.getElementById('refresh-label').textContent = 'Updating…';
   updateMarketStatus();
   await Promise.all([fetchStocks(), fetchCrypto(), fetchTopCrypto(), fetchFearGreed(), fetchCommodities()]);
+  fetchHotBuys(); // run independently — heavier scan, doesn't block main refresh
   const t = new Date();
   document.getElementById('last-updated').textContent =
     'Last updated ' + t.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) +
