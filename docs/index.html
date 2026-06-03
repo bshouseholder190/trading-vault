@@ -992,17 +992,29 @@ function analystRating(rec) {
 }
 
 function makeDonut(rt) {
-  if (!rt || !rt.total) return '<div class="rating-pill rating-na">No Data</div>';
+  const SIZE  = 60;
+  const cx    = SIZE / 2;
+  const cy    = SIZE / 2;
+  const R     = 21;
+  const THICK = 9;
+  const circ  = 2 * Math.PI * R;   // ≈ 131.9
+  const GAP   = circ * 0.018;      // tiny visual gap between segments
 
-  const SIZE   = 54;               // svg canvas
-  const cx     = SIZE / 2;
-  const cy     = SIZE / 2;
-  const R      = 19;               // outer radius
-  const THICK  = 7;                // ring thickness
-  const GAP    = 0.03;             // gap between segments (radians)
-  const circ   = 2 * Math.PI * R;
-  const tot    = rt.total;
+  // Background track
+  const track = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none"
+    stroke="#1e2d3d" stroke-width="${THICK}"/>`;
 
+  if (!rt || !rt.total) {
+    return `<div style="display:flex;align-items:center;gap:10px;justify-content:flex-end">
+      <svg width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">${track}
+        <text x="${cx}" y="${cy+4}" text-anchor="middle" font-size="9"
+          fill="#5a7a9a" font-family="Inter,sans-serif">N/A</text>
+      </svg>
+      <div class="rating-pill rating-na">No Data</div>
+    </div>`;
+  }
+
+  const tot  = rt.total;
   const segs = [
     { val: rt.sb, color: '#00e676', label: 'Strong Buy'  },
     { val: rt.b,  color: '#4caf73', label: 'Buy'         },
@@ -1011,27 +1023,23 @@ function makeDonut(rt) {
     { val: rt.ss, color: '#ff4560', label: 'Strong Sell' },
   ].filter(s => s.val > 0);
 
-  // Build SVG circles using stroke-dasharray trick
-  let cumOffset = 0; // in px along circumference
-  const gapPx = GAP * R;
-
+  // Each segment: rotate(-90) makes 12 o'clock the start.
+  // stroke-dasharray="segLen circ" draws one arc of segLen.
+  // Negative dashoffset advances the starting position clockwise.
+  let cumLen = 0;
   const circles = segs.map(s => {
-    const segLen = (s.val / tot) * circ - gapPx;
-    const dashOffset = circ / 4 - cumOffset; // 12 o'clock start
-    const el = `<circle
-      cx="${cx}" cy="${cy}" r="${R}"
-      fill="none"
-      stroke="${s.color}"
-      stroke-width="${THICK}"
-      stroke-linecap="butt"
-      stroke-dasharray="${Math.max(0, segLen)} ${circ}"
-      stroke-dashoffset="${dashOffset}"
-    />`;
-    cumOffset += (s.val / tot) * circ;
+    const full   = (s.val / tot) * circ;       // allocated arc length
+    const segLen = Math.max(0, full - GAP);    // visible arc (minus gap)
+    const el = `<circle cx="${cx}" cy="${cy}" r="${R}"
+      fill="none" stroke="${s.color}"
+      stroke-width="${THICK}" stroke-linecap="butt"
+      stroke-dasharray="${segLen} ${circ}"
+      stroke-dashoffset="${-cumLen}"
+      transform="rotate(-90 ${cx} ${cy})"/>`;
+    cumLen += full;   // advance by full allocation (including gap)
     return el;
   });
 
-  // Tooltip rows
   const ttRows = segs.map(s => `
     <div class="tt-row">
       <div class="tt-dot" style="background:${s.color}"></div>
@@ -1039,26 +1047,26 @@ function makeDonut(rt) {
       <span class="tt-count">${s.val}</span>
     </div>`).join('');
 
-  return `
-    <div class="donut-cell">
-      <div class="donut-wrap">
-        <svg width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">
-          <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="#1c2635" stroke-width="${THICK}"/>
-          ${circles.join('')}
-          <text x="${cx}" y="${cy + 4}" text-anchor="middle"
-            font-size="10" font-weight="800" fill="#e8f0f8"
-            font-family="Inter,sans-serif">${tot}</text>
-        </svg>
-        <div class="donut-tooltip">
-          <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px">Analyst Breakdown</div>
-          ${ttRows}
-        </div>
+  return `<div style="display:flex;align-items:center;gap:10px;justify-content:flex-end">
+    <div class="donut-wrap">
+      <svg width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">
+        ${track}
+        ${circles.join('\n        ')}
+        <text x="${cx}" y="${cy + 4}" text-anchor="middle"
+          font-size="11" font-weight="800" fill="#e8f0f8"
+          font-family="Inter,sans-serif">${tot}</text>
+      </svg>
+      <div class="donut-tooltip">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:6px;
+          text-transform:uppercase;letter-spacing:0.8px">Analyst Breakdown</div>
+        ${ttRows}
       </div>
-      <div class="rating-info">
-        <div class="rating-pill ${rt.cssClass}">${rt.label}</div>
-        <div style="font-size:10px;color:var(--muted);margin-top:4px">${tot} analysts</div>
-      </div>
-    </div>`;
+    </div>
+    <div>
+      <div class="rating-pill ${rt.cssClass}">${rt.label}</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:4px;text-align:right">${tot} analysts</div>
+    </div>
+  </div>`;
 }
 
 async function fetchStocks() {
