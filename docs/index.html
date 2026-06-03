@@ -385,6 +385,7 @@
     <div class="ticker-pill"><div class="label">Ethereum</div><div class="price" id="eth-price">—</div><div class="change" id="eth-change">—</div></div>
     <div class="ticker-pill"><div class="label">VIX</div><div class="price" id="vix-price">—</div><div class="change" id="vix-change">—</div></div>
     <div class="ticker-pill"><div class="label">Gold</div><div class="price" id="gold-price">—</div><div class="change" id="gold-change">—</div></div>
+    <div class="ticker-pill"><div class="label">Silver</div><div class="price" id="silver-price">—</div><div class="change" id="silver-change">—</div></div>
   </div>
 
   <div class="grid">
@@ -452,6 +453,27 @@
           <div class="fg-desc" id="fg-desc">Fear & Greed Index (0 = Extreme Fear, 100 = Extreme Greed)</div>
         </div>
       </div>
+    </div>
+
+    <!-- Commodities -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title"><span class="icon">🥇</span> Commodities</div>
+        <span class="badge" id="commodities-badge">Loading…</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Commodity</th>
+            <th>Price</th>
+            <th>Change</th>
+            <th>% Change</th>
+          </tr>
+        </thead>
+        <tbody id="commodities-tbody">
+          <tr class="loading-row"><td colspan="4">Loading…</td></tr>
+        </tbody>
+      </table>
     </div>
 
     <!-- Top Crypto by Market Cap -->
@@ -762,17 +784,66 @@ async function fetchFearGreed() {
   } catch {}
 }
 
-// ── VIX / Gold via Finnhub ────────────────────────────────────────────────────
+// ── VIX / Gold / Silver / Commodities via Finnhub ────────────────────────────
+const COMMODITIES = [
+  { symbol: 'GLD',  label: 'Gold (GLD)',    icon: '🥇' },
+  { symbol: 'SLV',  label: 'Silver (SLV)',  icon: '🥈' },
+  { symbol: 'USO',  label: 'Oil (USO)',     icon: '🛢️' },
+  { symbol: 'UNG',  label: 'Nat Gas (UNG)', icon: '🔥' },
+  { symbol: 'CORN', label: 'Corn (CORN)',   icon: '🌽' },
+  { symbol: 'WEAT', label: 'Wheat (WEAT)',  icon: '🌾' },
+  { symbol: 'PDBC', label: 'Commodities',  icon: '📦' },
+];
+
 async function fetchExtras() {
   const cfg = loadConfig();
-  if (!cfg.finnhubKey) return;
+  const badge = document.getElementById('commodities-badge');
+  const tbody = document.getElementById('commodities-tbody');
+
+  if (!cfg.finnhubKey) {
+    badge.textContent = 'No API key';
+    tbody.innerHTML = `<tr class="loading-row"><td colspan="4">Add your Finnhub API key in ⚙ Configure to see commodity data.</td></tr>`;
+    return;
+  }
+
   try {
-    const [vix, gold] = await Promise.all([
-      fetch(`https://finnhub.io/api/v1/quote?symbol=VIX&token=${cfg.finnhubKey}`).then(r => r.json()),
-      fetch(`https://finnhub.io/api/v1/quote?symbol=GLD&token=${cfg.finnhubKey}`).then(r => r.json()),
-    ]);
-    updatePill('vix', vix.c, vix.dp);
-    updatePill('gold', gold.c, gold.dp);
+    const results = await Promise.all(
+      COMMODITIES.map(c =>
+        fetch(`https://finnhub.io/api/v1/quote?symbol=${c.symbol}&token=${cfg.finnhubKey}`)
+          .then(r => r.json())
+          .then(q => ({ ...c, q }))
+          .catch(() => null)
+      )
+    );
+
+    const rows = results.filter(r => r && r.q && r.q.c);
+
+    // Update ticker bar pills
+    const gld = rows.find(r => r.symbol === 'GLD');
+    const slv = rows.find(r => r.symbol === 'SLV');
+    const vixData = await fetch(`https://finnhub.io/api/v1/quote?symbol=VIX&token=${cfg.finnhubKey}`).then(r => r.json()).catch(() => null);
+
+    if (gld)    updatePill('gold',   gld.q.c, gld.q.dp);
+    if (slv)    updatePill('silver', slv.q.c, slv.q.dp);
+    if (vixData) updatePill('vix',   vixData.c, vixData.dp);
+
+    badge.textContent = rows.length + ' commodities';
+
+    tbody.innerHTML = rows.map(({ icon, label, q }) => {
+      const cls = colorClass(q.dp);
+      return `<tr>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:18px">${icon}</span>
+            <div class="ticker-name">${label}</div>
+          </div>
+        </td>
+        <td><div class="price-cell">${fmtPrice(q.c)}</div></td>
+        <td><div class="change-cell ${cls}">${fmtPrice(Math.abs(q.d))} ${q.d >= 0 ? '▲' : '▼'}</div></td>
+        <td><div class="change-cell ${cls}">${fmtPct(q.dp)}</div></td>
+      </tr>`;
+    }).join('');
+
   } catch {}
 }
 
