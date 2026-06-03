@@ -615,20 +615,57 @@
   .rating-strong-sell { background: #ff456020; color: #ff4560; border: 1px solid #ff456040; }
   .rating-na          { background: var(--surface3); color: var(--muted); border: 1px solid var(--border2); }
 
-  .rating-bar {
+  /* donut wrapper */
+  .donut-cell {
     display: flex;
-    gap: 2px;
-    margin-top: 5px;
-    height: 4px;
-    border-radius: 2px;
-    overflow: hidden;
-    min-width: 80px;
+    align-items: center;
+    gap: 10px;
+    justify-content: flex-end;
   }
-  .rb-sb { background: #00e676; }
-  .rb-b  { background: #66bb6a; }
-  .rb-h  { background: #ffd600; }
-  .rb-s  { background: #ffa726; }
-  .rb-ss { background: #ff4560; }
+
+  .donut-wrap {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  /* tooltip on hover */
+  .donut-tooltip {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 8px);
+    right: 0;
+    background: var(--surface3);
+    border: 1px solid var(--border2);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 12px;
+    white-space: nowrap;
+    z-index: 50;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    pointer-events: none;
+    min-width: 140px;
+  }
+
+  .donut-wrap:hover .donut-tooltip { display: block; }
+
+  .tt-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 3px 0;
+  }
+
+  .tt-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .tt-label { color: var(--muted); flex: 1; }
+  .tt-count { font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+
+  .rating-info { text-align: right; }
 
   .target-val {
     font-family: 'JetBrains Mono', monospace;
@@ -954,17 +991,74 @@ function analystRating(rec) {
     sb: r.strongBuy||0, b: r.buy||0, h: r.hold||0, s: r.sell||0, ss: r.strongSell||0 };
 }
 
-function ratingBar(rt) {
-  if (!rt) return '';
-  const tot = rt.total || 1;
-  const w = n => Math.round((n/tot)*100);
-  return `<div class="rating-bar">
-    ${rt.sb ? `<div class="rb-sb" style="width:${w(rt.sb)}%" title="Strong Buy: ${rt.sb}"></div>` : ''}
-    ${rt.b  ? `<div class="rb-b"  style="width:${w(rt.b)}%"  title="Buy: ${rt.b}"></div>`         : ''}
-    ${rt.h  ? `<div class="rb-h"  style="width:${w(rt.h)}%"  title="Hold: ${rt.h}"></div>`        : ''}
-    ${rt.s  ? `<div class="rb-s"  style="width:${w(rt.s)}%"  title="Sell: ${rt.s}"></div>`        : ''}
-    ${rt.ss ? `<div class="rb-ss" style="width:${w(rt.ss)}%" title="Strong Sell: ${rt.ss}"></div>`: ''}
-  </div>`;
+function makeDonut(rt) {
+  if (!rt || !rt.total) return '<div class="rating-pill rating-na">No Data</div>';
+
+  const SIZE   = 54;               // svg canvas
+  const cx     = SIZE / 2;
+  const cy     = SIZE / 2;
+  const R      = 19;               // outer radius
+  const THICK  = 7;                // ring thickness
+  const GAP    = 0.03;             // gap between segments (radians)
+  const circ   = 2 * Math.PI * R;
+  const tot    = rt.total;
+
+  const segs = [
+    { val: rt.sb, color: '#00e676', label: 'Strong Buy'  },
+    { val: rt.b,  color: '#4caf73', label: 'Buy'         },
+    { val: rt.h,  color: '#ffd600', label: 'Hold'        },
+    { val: rt.s,  color: '#ffa726', label: 'Sell'        },
+    { val: rt.ss, color: '#ff4560', label: 'Strong Sell' },
+  ].filter(s => s.val > 0);
+
+  // Build SVG circles using stroke-dasharray trick
+  let cumOffset = 0; // in px along circumference
+  const gapPx = GAP * R;
+
+  const circles = segs.map(s => {
+    const segLen = (s.val / tot) * circ - gapPx;
+    const dashOffset = circ / 4 - cumOffset; // 12 o'clock start
+    const el = `<circle
+      cx="${cx}" cy="${cy}" r="${R}"
+      fill="none"
+      stroke="${s.color}"
+      stroke-width="${THICK}"
+      stroke-linecap="butt"
+      stroke-dasharray="${Math.max(0, segLen)} ${circ}"
+      stroke-dashoffset="${dashOffset}"
+    />`;
+    cumOffset += (s.val / tot) * circ;
+    return el;
+  });
+
+  // Tooltip rows
+  const ttRows = segs.map(s => `
+    <div class="tt-row">
+      <div class="tt-dot" style="background:${s.color}"></div>
+      <span class="tt-label">${s.label}</span>
+      <span class="tt-count">${s.val}</span>
+    </div>`).join('');
+
+  return `
+    <div class="donut-cell">
+      <div class="donut-wrap">
+        <svg width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">
+          <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="#1c2635" stroke-width="${THICK}"/>
+          ${circles.join('')}
+          <text x="${cx}" y="${cy + 4}" text-anchor="middle"
+            font-size="10" font-weight="800" fill="#e8f0f8"
+            font-family="Inter,sans-serif">${tot}</text>
+        </svg>
+        <div class="donut-tooltip">
+          <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px">Analyst Breakdown</div>
+          ${ttRows}
+        </div>
+      </div>
+      <div class="rating-info">
+        <div class="rating-pill ${rt.cssClass}">${rt.label}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:4px">${tot} analysts</div>
+      </div>
+    </div>`;
 }
 
 async function fetchStocks() {
@@ -1002,11 +1096,7 @@ async function fetchStocks() {
     const c = cls(q.dp);
     const range = q.l && q.h ? `${fmtP(q.l)} <span style="color:var(--muted2)">–</span> ${fmtP(q.h)}` : '—';
     const rt = analystRating(rec);
-    const ratingHtml = rt
-      ? `<div class="rating-pill ${rt.cssClass}">${rt.icon} ${rt.label}</div>
-         ${ratingBar(rt)}
-         <div style="font-size:10px;color:var(--muted);margin-top:3px">${rt.total} analysts</div>`
-      : `<div class="rating-pill rating-na">No Data</div>`;
+    const ratingHtml = makeDonut(rt);
     const targetHtml = pt && pt.targetMean
       ? `<div class="target-val">${fmtP(pt.targetMean)}</div>
          <div class="target-sub">${fmtP(pt.targetLow)} – ${fmtP(pt.targetHigh)}</div>`
