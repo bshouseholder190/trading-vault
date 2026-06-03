@@ -1642,6 +1642,143 @@ function vaultBoost(ticker) {
   return 0;
 }
 
+// ── Source: StockTwits (free, no key) ────────────────────────────────────────
+// Real-time social sentiment from traders — bullish/bearish tag on each post
+async function stockTwitsSignal(t) {
+  try {
+    const data = await fetch(
+      `https://api.stocktwits.com/api/2/streams/symbol/${t}.json`,
+      { signal: AbortSignal.timeout(5000) }
+    ).then(r => r.json());
+
+    const msgs = data.messages || [];
+    let bull = 0, bear = 0, neutral = 0;
+    msgs.forEach(m => {
+      const s = m.entities?.sentiment?.basic;
+      if      (s === 'Bullish') bull++;
+      else if (s === 'Bearish') bear++;
+      else                      neutral++;
+    });
+
+    const tagged   = bull + bear;
+    const bullPct  = tagged > 0 ? bull / tagged : 0.5;
+    const stScore  = tagged > 0 ? (bullPct - 0.5) * 2 : 0;  // −1 to +1
+
+    return { stBull: bull, stBear: bear, stNeutral: neutral,
+             stTotal: msgs.length, stBullPct: bullPct, stScore };
+  } catch {
+    return { stBull:0, stBear:0, stNeutral:0, stTotal:0, stBullPct:0.5, stScore:0 };
+  }
+}
+
+// ── Source: Reddit (WSB + stocks + investing + options) ───────────────────────
+// Counts posts + upvote ratios across the most relevant investing subreddits
+async function redditSignal(t) {
+  const SUBS = ['wallstreetbets','stocks','investing','options','StockMarket'];
+  try {
+    const results = await Promise.all(SUBS.map(sub =>
+      fetch(
+        `https://www.reddit.com/r/${sub}/search.json?q=${t}&sort=relevance&t=week&limit=10&restrict_sr=1`,
+        { signal: AbortSignal.timeout(5000) }
+      ).then(r => r.json()).catch(() => null)
+    ));
+
+    let posts = 0, totalScore = 0, totalComments = 0, ratioSum = 0, ratioCount = 0;
+    const topPosts = [];
+
+    results.forEach((r, idx) => {
+      if (!r?.data?.children) return;
+      r.data.children.forEach(p => {
+        const d = p.data;
+        posts++;
+        totalScore    += d.score        || 0;
+        totalComments += d.num_comments || 0;
+        if (d.upvote_ratio != null) { ratioSum += d.upvote_ratio; ratioCount++; }
+        if (d.score > 50) topPosts.push({ sub: SUBS[idx], title: d.title, score: d.score, comments: d.num_comments });
+      });
+    });
+
+    topPosts.sort((a,b) => b.score - a.score);
+    const avgRatio   = ratioCount > 0 ? ratioSum / ratioCount : 0.5;
+    const redditScore = (avgRatio - 0.5) * 2;   // −1 to +1
+
+    // Momentum label
+    const momentum = posts >= 10 ? 'viral' : posts >= 5 ? 'trending' : posts >= 2 ? 'active' : 'low';
+
+    return { redditPosts: posts, redditComments: totalComments,
+             redditAvgScore: posts > 0 ? Math.round(totalScore/posts) : 0,
+             redditRatio: avgRatio, redditScore, redditMomentum: momentum,
+             redditTopPost: topPosts[0] || null };
+  } catch {
+    return { redditPosts:0, redditComments:0, redditAvgScore:0,
+             redditRatio:0.5, redditScore:0, redditMomentum:'low', redditTopPost:null };
+  }
+}
+
+// ── Source: Unusual Whales news headlines (free public endpoint) ──────────────
+// Scans breaking financial news headlines for bullish/bearish language
+async function unusualWhalesNews(t) {
+  try {
+    const data = await fetch(
+      `https://phx.unusualwhales.com/api/news/headlines?ticker=${t}&limit=20`,
+      { signal: AbortSignal.timeout(5000) }
+    ).then(r => r.json());
+
+    const items = data?.data || data?.headlines || (Array.isArray(data) ? data : []);
+    if (!items.length) return { uwScore: 0, uwHeadlines: [] };
+
+    const BULL_WORDS = ['beat','surge','rally','upgrade','raises','strong','buy','outperform','record','growth','positive','bullish','breakout','soar'];
+    const BEAR_WORDS = ['miss','fall','downgrade','cuts','weak','sell','underperform','loss','negative','bearish','decline','concern','risk','warn'];
+
+    let bullHits = 0, bearHits = 0;
+    const headlines = [];
+    items.slice(0, 10).forEach(item => {
+      const text = (item.title || item.headline || '').toLowerCase();
+      const bull = BULL_WORDS.filter(w => text.includes(w)).length;
+      const bear = BEAR_WORDS.filter(w => text.includes(w)).length;
+      bullHits += bull; bearHits += bear;
+      if (bull > bear) headlines.push({ text: item.title || item.headline, tone: 'bull' });
+      else if (bear > bull) headlines.push({ text: item.title || item.headline, tone: 'bear' });
+    });
+
+    const total = bullHits + bearHits;
+    const uwScore = total > 0 ? ((bullHits - bearHits) / total) : 0;  // −1 to +1
+    return { uwScore, uwHeadlines: headlines.slice(0, 2) };
+  } catch {
+    return { uwScore: 0, uwHeadlines: [] };
+  }
+}
+
+// ── Source: Finnhub company news sentiment ────────────────────────────────────
+// Scans last 7 days of company news headlines for signal words
+async function finnhubNewsSentiment(t, key) {
+  try {
+    const to   = new Date().toISOString().slice(0,10);
+    const from = new Date(Date.now() - 7*864e5).toISOString().slice(0,10);
+    const items = await fetch(
+      `https://finnhub.io/api/v1/company-news?symbol=${t}&from=${from}&to=${to}&token=${key}`
+    ).then(r => r.json()).catch(() => []);
+
+    if (!Array.isArray(items) || !items.length) return { fnNewsScore: 0, fnTopHeadline: null };
+
+    const BULL = ['beat','upgrade','raises','strong buy','outperform','record','growth','rally','surge','positive'];
+    const BEAR = ['miss','downgrade','cuts','weak','sell','underperform','loss','decline','concern','warning'];
+
+    let b = 0, br = 0;
+    let topHeadline = null, topScore = -999;
+    items.slice(0, 15).forEach(item => {
+      const txt = (item.headline||'').toLowerCase();
+      const bs = BULL.filter(w => txt.includes(w)).length;
+      const brs = BEAR.filter(w => txt.includes(w)).length;
+      b += bs; br += brs;
+      if (bs - brs > topScore) { topScore = bs - brs; topHeadline = item.headline; }
+    });
+
+    const total = b + br;
+    return { fnNewsScore: total > 0 ? (b - br) / total : 0, fnTopHeadline: topHeadline };
+  } catch { return { fnNewsScore: 0, fnTopHeadline: null }; }
+}
+
 // ─ Composite scoring ─────────────────────────────────────────────────────────
 function compositeScore(signals) {
   const {
@@ -1652,28 +1789,43 @@ function compositeScore(signals) {
     insiderScore   = 0,
     yahooScore     = 0,
     yahooTarget    = null,
+    // social signals
+    stScore        = 0,   // StockTwits bullish sentiment  −1 to +1
+    redditScore    = 0,   // Reddit upvote ratio sentiment −1 to +1
+    redditPosts    = 0,   // Reddit post volume (buzz proxy)
+    uwScore        = 0,   // Unusual Whales news tone      −1 to +1
+    fnNewsScore    = 0,   // Finnhub news headline tone    −1 to +1
   } = signals;
 
   const tot = rec ? (rec.strongBuy||0)+(rec.buy||0)+(rec.hold||0)+(rec.sell||0)+(rec.strongSell||0) : 0;
   const bullish = rec ? ((rec.strongBuy||0)*2 + (rec.buy||0)) : 0;
   const analystScore = tot ? bullish / tot : 0;                     // 0–2
 
-  // Price target upside (use best available target)
+  // Price target upside (best available target)
   const target = pt?.targetMean || yahooTarget;
   const upside = target && q?.c ? (target - q.c) / q.c : 0;
   const upsideScore = Math.max(0, Math.min(upside / 0.5, 1));       // 0–1
 
-  // Weighted composite (weights sum to ~1.0 before vault boost)
-  const baseScore =
-    analystScore   * 0.22 +   // Finnhub analyst consensus
-    upsideScore    * 0.18 +   // price target upside
-    upgradeScore   * 0.18 +   // recent upgrades (Finnhub)
-    earningsScore  * 0.15 +   // earnings beat rate
-    fmpGradeScore  * 0.12 +   // FMP analyst grades
-    yahooScore     * 0.10 +   // Yahoo Finance confirmation
-    insiderScore   * 0.05;    // insider buying bonus
+  // Social buzz volume bonus (more Reddit posts = more attention)
+  const buzzBonus = Math.min(redditPosts / 20, 1) * 0.05;           // 0–0.05
 
-  const score = baseScore + vaultBoost(signals.t); // +0.20 if in your bullish vault
+  // Social sentiment composite (average of available signals, normalized 0–1)
+  const rawSocial = (stScore + redditScore + uwScore + fnNewsScore) / 4;
+  const socialScore = (rawSocial + 1) / 2;                          // remap −1..+1 → 0..1
+
+  // Weighted composite
+  const baseScore =
+    analystScore   * 0.19 +   // Finnhub analyst consensus
+    upsideScore    * 0.15 +   // price target upside
+    upgradeScore   * 0.15 +   // recent analyst upgrades
+    earningsScore  * 0.12 +   // earnings beat rate
+    fmpGradeScore  * 0.10 +   // FMP analyst grades
+    yahooScore     * 0.08 +   // Yahoo Finance confirmation
+    socialScore    * 0.12 +   // social sentiment (StockTwits + Reddit + UW + FH news)
+    insiderScore   * 0.04 +   // insider buying
+    buzzBonus;                 // Reddit volume bonus
+
+  const score = baseScore + vaultBoost(signals.t);
 
   return { score, upside: upside * 100 };
 }
@@ -1719,6 +1871,36 @@ function buildHBReasons(signals) {
   if (pt?.targetHigh && q?.c) {
     const hi = ((pt.targetHigh - q.c) / q.c * 100).toFixed(0);
     if (hi > 25) reasons.push(`<span class="src-tag src-finnhub">Finnhub</span> Bull-case target ${fmtP(pt.targetHigh)} implies <strong style="color:var(--green)">+${hi}% max upside</strong>`);
+  }
+
+  // 5b. Social signals
+  const { stBull, stBear, stTotal, stBullPct,
+          redditPosts, redditMomentum, redditTopPost,
+          uwHeadlines, fnTopHeadline } = signals;
+
+  // StockTwits sentiment
+  if (stTotal >= 3 && stBullPct != null) {
+    const pct = Math.round(stBullPct * 100);
+    const tone = pct >= 60 ? `<strong style="color:var(--green)">${pct}% bullish</strong>`
+               : pct <= 40 ? `<strong style="color:var(--red)">${pct}% bullish</strong>`
+               :             `${pct}% bullish`;
+    reasons.push(`<span class="src-tag src-stocktwits">StockTwits</span> ${tone} across ${stTotal} trader posts · ${stBull} 🐂 ${stBear} 🐻`);
+  }
+
+  // Reddit buzz
+  if (redditPosts >= 2 && reasons.length < 3) {
+    const buzz = redditMomentum === 'viral'    ? `<strong style="color:var(--green)">🔥 Viral</strong> —`
+               : redditMomentum === 'trending' ? `<strong style="color:var(--yellow)">📈 Trending</strong> —`
+               : '📣 Active —';
+    const sub = redditTopPost ? `top post on <strong style="color:var(--text)">r/${redditTopPost.sub}</strong> (${redditTopPost.score} upvotes)` : `${redditPosts} posts across WSB, r/stocks, r/investing`;
+    reasons.push(`<span class="src-tag src-reddit">Reddit</span> ${buzz} ${sub}`);
+  }
+
+  // Unusual Whales or Finnhub news headline
+  const headline = (uwHeadlines?.length ? uwHeadlines[0]?.text : null) || fnTopHeadline;
+  if (headline && reasons.length < 3) {
+    const trimmed = headline.length > 80 ? headline.slice(0, 80) + '…' : headline;
+    reasons.push(`<span class="src-tag src-news">News</span> "${trimmed}"`);
   }
 
   // 6. Your Obsidian vault bull case (highest priority personal research)
@@ -1781,7 +1963,28 @@ const SRC_STYLE = `<style>
   .src-finnhub{background:#4db8ff18;color:#4db8ff;border:1px solid #4db8ff40}
   .src-fmp    {background:#b388ff18;color:#b388ff;border:1px solid #b388ff40}
   .src-yahoo  {background:#ffd60018;color:#ffd600;border:1px solid #ffd60040}
-  .src-vault  {background:#00e67618;color:#00e676;border:1px solid #00e67640}
+  .src-vault      {background:#00e67618;color:#00e676;border:1px solid #00e67640}
+  .src-stocktwits {background:#1d9bf018;color:#1d9bf0;border:1px solid #1d9bf040}
+  .src-reddit     {background:#ff451518;color:#ff6314;border:1px solid #ff631440}
+  .src-news       {background:#b388ff18;color:#b388ff;border:1px solid #b388ff40}
+
+  /* social bar on Hot Buy cards */
+  .social-bar {
+    display: flex; gap: 8px; align-items: center;
+    padding: 10px 0 2px;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .social-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; font-weight: 600;
+    padding: 3px 8px; border-radius: 5px;
+    background: var(--surface3); border: 1px solid var(--border2);
+    white-space: nowrap;
+  }
+  .social-chip.bull { background: #00e67618; color: #00e676; border-color: #00e67640; }
+  .social-chip.bear { background: #ff456018; color: #ff4560; border-color: #ff456040; }
+  .social-chip.neutral { color: var(--muted); }
 </style>`;
 
 // ─ Main fetch ────────────────────────────────────────────────────────────────
@@ -1824,16 +2027,21 @@ async function fetchHotBuys() {
     .sort((a,b) => b.quickScore - a.quickScore)
     .slice(0, 12);
 
-  body.innerHTML = `<div class="hb-loading"><span class="spinner"></span> Deep analysis on ${candidates.length} candidates (upgrades · earnings · insider · Yahoo)…</div>`;
+  body.innerHTML = `<div class="hb-loading"><span class="spinner"></span> Deep analysis on ${candidates.length} candidates — analyst upgrades · earnings · insider · StockTwits · Reddit · news…</div>`;
 
   const deepScored = await Promise.all(candidates.map(async s => {
-    const [upgrades, earnings, fmp, yahoo] = await Promise.all([
+    const [upgrades, earnings, fmp, yahoo, stockTwits, reddit, uwNews, fhNews] = await Promise.all([
       fhUpgrades(s.t, cfg.finnhubKey),
       fhEarnings(s.t, cfg.finnhubKey),
       fmpSignals(s.t, cfg.fmpKey),
       yahooSignals(s.t),
+      stockTwitsSignal(s.t),
+      redditSignal(s.t),
+      unusualWhalesNews(s.t),
+      finnhubNewsSentiment(s.t, cfg.finnhubKey),
     ]);
-    const signals = { ...s, ...upgrades, ...earnings, ...fmp, ...yahoo };
+    const signals = { ...s, ...upgrades, ...earnings, ...fmp, ...yahoo,
+                      ...stockTwits, ...reddit, ...uwNews, ...fhNews };
     const { score, upside } = compositeScore(signals);
     return { ...signals, score, upside };
   }));
@@ -1849,7 +2057,7 @@ async function fetchHotBuys() {
     return;
   }
 
-  const sources = ['Finnhub', cfg.fmpKey ? 'FMP' : null, 'Yahoo Finance'].filter(Boolean);
+  const sources = ['Finnhub', cfg.fmpKey ? 'FMP' : null, 'Yahoo', 'StockTwits', 'Reddit', 'News'].filter(Boolean);
   badge.textContent = `${top3.length} picks · ${sources.join(' + ')} · ${phase1.length} scanned`;
 
   const icons = ['🥇','🥈','🥉'];
@@ -1889,9 +2097,18 @@ async function fetchHotBuys() {
       <ul class="hb-reasons">
         ${reasons.map(r=>`<li class="hb-reason"><div class="hb-reason-dot"></div><span>${r}</span></li>`).join('')}
       </ul>
-      <div style="font-size:10px;color:var(--muted2);padding-top:8px;border-top:1px solid var(--border)">
-        Score: <strong style="color:var(--text)">${(s.score*100).toFixed(0)}/100</strong>
-        · Composite of ${sources.length} sources
+      <div class="social-bar">
+        ${s.stTotal > 0 ? (() => {
+          const pct = Math.round(s.stBullPct*100);
+          const tone = pct>=60?'bull':pct<=40?'bear':'neutral';
+          return `<div class="social-chip ${tone}">𝕏 StockTwits ${pct}% 🐂</div>`;
+        })() : ''}
+        ${s.redditPosts > 0 ? `<div class="social-chip ${s.redditMomentum==='viral'?'bull':s.redditMomentum==='trending'?'bull':'neutral'}">
+          Reddit ${s.redditMomentum==='viral'?'🔥':s.redditMomentum==='trending'?'📈':'💬'} ${s.redditPosts} posts
+        </div>` : ''}
+        <div class="social-chip" style="margin-left:auto;font-size:10px;color:var(--muted2)">
+          Score ${(s.score*100).toFixed(0)}/100
+        </div>
       </div>
     </div>`;
   }).join('')}</div>`;
