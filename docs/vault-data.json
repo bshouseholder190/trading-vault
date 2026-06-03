@@ -1,0 +1,82 @@
+﻿{
+    "generatedAt":  "2026-06-03T15:36:47Z",
+    "stockCount":  1,
+    "cryptoCount":  1,
+    "openTradeCount":  0,
+    "stocks":  [
+                   {
+                       "ticker":  "NVDA",
+                       "company":  "NVIDIA Corporation",
+                       "sector":  "Technology",
+                       "industry":  "Semiconductors",
+                       "rating":  "bullish",
+                       "priceTarget":  200,
+                       "marketCap":  "mega",
+                       "tags":  [
+                                    "research",
+                                    "stock",
+                                    "AI",
+                                    "semiconductors"
+                                ],
+                       "bullCase":  [
+                                        "Blackwell GPU cycle is multi-year; enterprise AI capex still in early innings",
+                                        "CUDA moat makes it extremely difficult for AMD/Intel to steal market share at scale",
+                                        "Sovereign AI and enterprise deployment = new revenue streams beyond hyperscalers"
+                                    ],
+                       "bearCase":  [
+                                        "Valuation stretched — priced for perfection",
+                                        "Export restrictions could limit China revenue",
+                                        "AMD and custom silicon (Google TPU, AWS Trainium) gaining ground"
+                                    ],
+                       "sourceFile":  "Example — NVDA Research.md",
+                       "lastUpdated":  "2026-06-03"
+                   }
+               ],
+    "crypto":  [
+                   {
+                       "ticker":  "ETH",
+                       "name":  "Ethereum",
+                       "category":  "L1",
+                       "chain":  "Ethereum",
+                       "cgId":  "eth",
+                       "rating":  "bullish",
+                       "priceTarget":  5000,
+                       "bullCase":  [
+                                        "ETF approval + institutional demand flywheel",
+                                        "Deflationary supply during high-activity periods",
+                                        "L2 ecosystem (Arbitrum, Base, Optimism) drives ETH demand via settlement"
+                                    ],
+                       "bearCase":  [
+                                        "L2s abstract ETH fee burn — less deflationary than expected",
+                                        "Solana and alt-L1s taking market share in retail/consumer apps",
+                                        "Regulatory uncertainty on staking yields"
+                                    ],
+                       "sourceFile":  "Example — ETH Research.md",
+                       "lastUpdated":  "2026-06-03"
+                   }
+               ],
+    "openTrades":  [
+
+                   ],
+    "strategy":  {
+                     "rsiMin":  50,
+                     "rsiMax":  70,
+                     "ivrMaxDirectional":  30,
+                     "ivrMinNeutral":  50,
+                     "volumeMultiplier":  1.2,
+                     "maxRiskPct":  1,
+                     "maxConcurrent":  5,
+                     "stopLossPct":  8,
+                     "profitTargetPct":  50,
+                     "preferredTimeRange":  "9:45-11:30 or 14:00-15:30 ET",
+                     "indicators":  [
+                                        "21 EMA",
+                                        "50 SMA",
+                                        "200 SMA",
+                                        "RSI(14)",
+                                        "ATR(14)",
+                                        "Volume MA(20)",
+                                        "VWAP"
+                                    ]
+                 }
+}

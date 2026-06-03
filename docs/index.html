@@ -1466,13 +1466,42 @@ async function fetchCommodities() {
 
 // ── Hot Buys — Multi-Source Scoring ──────────────────────────────────────────
 
-const SCAN_UNIVERSE = [
+const SCAN_UNIVERSE_BASE = [
   'NVDA','AAPL','MSFT','TSLA','AMD','AMZN','META','GOOGL',
   'AVGO','JPM','V','MA','UNH','LLY','JNJ','PG','HD','COST',
   'CRM','NOW','PLTR','PANW','CRWD','ARM','MRVL',
   'ORCL','ADBE','INTU','KLAC','LRCX','AMAT','TXN','QCOM',
   'BAC','GS','WMT','NKE','NFLX','UBER','ABNB','BKNG',
 ];
+
+// ── Load vault-data.json (generated from your Obsidian Research notes) ───────
+let vaultData = null;
+async function loadVaultData() {
+  try {
+    vaultData = await fetch('./vault-data.json?v=' + Date.now()).then(r => r.json());
+    console.log(`[Vault] Loaded: ${vaultData.stockCount} stocks, ${vaultData.cryptoCount} crypto`);
+  } catch (e) {
+    console.warn('[Vault] vault-data.json not found — using base scan universe only');
+    vaultData = { stocks: [], crypto: [], openTrades: [], strategy: {} };
+  }
+}
+
+function vaultStock(ticker) {
+  return vaultData?.stocks?.find(s => s.ticker === ticker) || null;
+}
+
+function buildScanUniverse(cfg) {
+  // Vault tickers first (your own research notes), then base universe, then user watchlist
+  const vaultTickers  = (vaultData?.stocks || [])
+    .filter(s => s.rating === 'bullish' || s.rating === 'watchlist')
+    .map(s => s.ticker);
+  const all = [...new Set([
+    ...vaultTickers,
+    ...SCAN_UNIVERSE_BASE,
+    ...cfg.stocks.filter(s => !['SPY','QQQ'].includes(s))
+  ])];
+  return all;
+}
 
 // ─ Source helpers ────────────────────────────────────────────────────────────
 
@@ -1603,6 +1632,16 @@ async function yahooSignals(t) {
   } catch { return { yahooScore: 0, yahooTarget: null }; }
 }
 
+// ─ Vault boost ───────────────────────────────────────────────────────────────
+function vaultBoost(ticker) {
+  const v = vaultStock(ticker);
+  if (!v) return 0;
+  if (v.rating === 'bullish')   return 0.20;
+  if (v.rating === 'watchlist') return 0.08;
+  if (v.rating === 'bearish')   return -0.30; // penalize — keeps it out of hot buys
+  return 0;
+}
+
 // ─ Composite scoring ─────────────────────────────────────────────────────────
 function compositeScore(signals) {
   const {
@@ -1624,8 +1663,8 @@ function compositeScore(signals) {
   const upside = target && q?.c ? (target - q.c) / q.c : 0;
   const upsideScore = Math.max(0, Math.min(upside / 0.5, 1));       // 0–1
 
-  // Weighted composite (weights sum to 1.0)
-  const score =
+  // Weighted composite (weights sum to ~1.0 before vault boost)
+  const baseScore =
     analystScore   * 0.22 +   // Finnhub analyst consensus
     upsideScore    * 0.18 +   // price target upside
     upgradeScore   * 0.18 +   // recent upgrades (Finnhub)
@@ -1633,6 +1672,8 @@ function compositeScore(signals) {
     fmpGradeScore  * 0.12 +   // FMP analyst grades
     yahooScore     * 0.10 +   // Yahoo Finance confirmation
     insiderScore   * 0.05;    // insider buying bonus
+
+  const score = baseScore + vaultBoost(signals.t); // +0.20 if in your bullish vault
 
   return { score, upside: upside * 100 };
 }
@@ -1680,7 +1721,22 @@ function buildHBReasons(signals) {
     if (hi > 25) reasons.push(`<span class="src-tag src-finnhub">Finnhub</span> Bull-case target ${fmtP(pt.targetHigh)} implies <strong style="color:var(--green)">+${hi}% max upside</strong>`);
   }
 
-  // 6. Sector/profile
+  // 6. Your Obsidian vault bull case (highest priority personal research)
+  const vault = vaultStock(signals.t);
+  if (vault?.bullCase?.length) {
+    vault.bullCase.slice(0, 2).forEach(bc => {
+      if (reasons.length < 3)
+        reasons.push(`<span class="src-tag src-vault">Your Research</span> ${bc}`);
+    });
+  }
+
+  // 7. Vault personal price target
+  if (vault?.priceTarget && signals.q?.c && reasons.length < 3) {
+    const vaultUpside = ((vault.priceTarget - signals.q.c) / signals.q.c * 100).toFixed(0);
+    reasons.push(`<span class="src-tag src-vault">Your Research</span> Your price target: <strong style="color:var(--green)">${fmtP(vault.priceTarget)}</strong> (+${vaultUpside}% from current)`);
+  }
+
+  // 8. Sector/profile fallback
   if (profile?.finnhubIndustry && reasons.length < 3) {
     reasons.push(`<span class="src-tag src-yahoo">Profile</span> Sector: <strong style="color:var(--text)">${profile.finnhubIndustry}</strong>${profile.marketCapitalization?' · Mkt Cap $'+fmtVol(profile.marketCapitalization*1e6):''}`);
   }
@@ -1725,6 +1781,7 @@ const SRC_STYLE = `<style>
   .src-finnhub{background:#4db8ff18;color:#4db8ff;border:1px solid #4db8ff40}
   .src-fmp    {background:#b388ff18;color:#b388ff;border:1px solid #b388ff40}
   .src-yahoo  {background:#ffd60018;color:#ffd600;border:1px solid #ffd60040}
+  .src-vault  {background:#00e67618;color:#00e676;border:1px solid #00e67640}
 </style>`;
 
 // ─ Main fetch ────────────────────────────────────────────────────────────────
@@ -1739,8 +1796,8 @@ async function fetchHotBuys() {
     return;
   }
 
-  // Combine scan universe with user's watchlist (deduplicated)
-  const universe = [...new Set([...SCAN_UNIVERSE, ...cfg.stocks.filter(s=>!['SPY','QQQ'].includes(s))])];
+  // Build scan universe: vault bullish picks first, then base list, then user watchlist
+  const universe = buildScanUniverse(cfg);
   body.innerHTML = `<div class="hb-loading"><span class="spinner"></span> Scanning ${universe.length} stocks across Finnhub · FMP · Yahoo Finance…</div>`;
   badge.textContent = 'Scanning…';
 
@@ -1805,7 +1862,10 @@ async function fetchHotBuys() {
       <div class="hb-header">
         <div class="hb-icon">${icons[i]}</div>
         <div>
-          <div class="hb-ticker">${s.t}</div>
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+            <div class="hb-ticker">${s.t}</div>
+            ${vaultStock(s.t) ? `<span class="src-tag src-vault" style="font-size:10px">📓 In Your Vault</span>` : ''}
+          </div>
           <div class="hb-name">${s.profile?.name||''}</div>
         </div>
       </div>
@@ -1858,8 +1918,11 @@ function startTimer() {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-refreshAll();
-startTimer();
+// Load vault data first so Hot Buys can use your Obsidian research notes
+loadVaultData().then(() => {
+  refreshAll();
+  startTimer();
+});
 </script>
 </body>
 </html>
